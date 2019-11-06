@@ -1,8 +1,11 @@
 import React, { Component } from 'react';
 import { StyleSheet, Text, View, Button, Alert } from 'react-native';
 import { AuthSession } from 'expo';
+import { Buffer } from 'buffer';
 import jwtDecode from 'jwt-decode';
 import uuid from 'react-native-uuid';
+import * as Crypto from 'expo-crypto';
+import * as Random from 'expo-random';
 
 /*
   You need to swap out the Auth0 client id and domain with
@@ -14,7 +17,25 @@ import uuid from 'react-native-uuid';
   You can open this app in the Expo client and check your logs to find out your redirect URL.
 */
 const clientID = '';
-const apiURL = __DEV__ ? 'https://testapi.fruitfulyield.com/v1' : 'https://api.fruitfulyield.com/v1'
+const apiURL = __DEV__ ? 'https://testapi.fruitfulyield.com/v1' : 'https://api.fruitfulyield.com/v1';
+
+async function createVerifierChallenge() {
+  const randomBytes = await Random.getRandomBytesAsync(32);
+  const verifier = base64URLEncode(Buffer.from(randomBytes));
+
+  const challengeBase64 = await Crypto.digestStringAsync(
+      Crypto.CryptoDigestAlgorithm.SHA256,
+      verifier,
+      { encoding: Crypto.CryptoEncoding.BASE64 }
+  );
+
+  const challenge = challengeBase64
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=/g, '');
+
+  return { verifier, challenge };
+}
 
 /**
  * Converts an object to a query string.
@@ -23,6 +44,14 @@ function toQueryString(params) {
   return '?' + Object.entries(params)
     .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
     .join('&');
+}
+
+function base64URLEncode(str) {
+  return str
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=/g, '');
 }
 
 export default class App extends Component {
@@ -35,17 +64,24 @@ export default class App extends Component {
     // of your Auth0 application.
     const redirectUrl = AuthSession.getRedirectUrl();
     console.log(`Redirect URL: ${redirectUrl}`);
-    
+
+    const codeChallenge = await createVerifierChallenge();
+
     // Structure the auth parameters and URL
     const queryParams = toQueryString({
       client_id: clientID,
       redirect_uri: redirectUrl,
-      response_type: 'code', // id_token will return a JWT token
+      response_type: 'code',
+      state: codeChallenge.verifier,
+      code_challenge: codeChallenge.challenge,
+      code_challenge_method: 'S256',
       scope: 'openid offline_access', // retrieve the user's profile
-      nonce: 'nonce', // ideally, this will be a random value
+      nonce: uuid.v1()
     });
-    const authUrl = `${apiURL}/oauth2.0/authorize` + queryParams;
 
+    console.log(queryParams);
+    const authUrl = `${apiURL}/oauth2.0/authorize` + queryParams;
+    console.log(authUrl);
     // Perform the authentication
     const response = await AuthSession.startAsync({ authUrl });
     console.log('Authentication response', response);
